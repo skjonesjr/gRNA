@@ -34,7 +34,7 @@ constant_region = 'AGCTTGGCGTAACTAGATCTTG'  # reverse primer binding site
 # direct_repeat + spacer + 6xT + barcode + GA + PAM + target + constant_region
 
 df = (pandas
-      .read_excel('https://static-content.springer.com/esm/art%3A10.1038%2Fnmeth.4104/MediaObjects/41592_2017_BFnmeth4104_MOESM77_ESM.xlsx', header=1)
+      .read_excel('https://static-content.springer.com/esm/art%3A10.1038%2Fnmeth.4104/MediaObjects/41592_2017_BFnmeth4104_MOESM79_ESM.xlsx', header=1)
       .rename(columns={
           "Guide sequence (5' to 3')": 'spacer',
           "Synthetic target sequence  (5' to 3')": 'syn target',  # barcode + GA + PAM + target + constant_region
@@ -63,27 +63,61 @@ df['syn target'].apply(lambda x: x.endswith(constant_region)).all()
 # %% [markdown]
 # Plot secondary structure
 
-idx = 0
+def draw(
+    structure: str,
+    sequence: str | None = None,
+    colors: list | None = None,
+    node_size: int = 10,
+    scale: float = (1, 1),
+    shift: tuple[float, float] = (0, 0),
+    ax: plt.Axes | None = None
+) -> None:
+    """
+    Draw a structure
+    """
+    if sequence is None:
+        sequence = [''] * len(structure)
+    if colors is None:
+        colors = ['skyblue'] * len(structure)
+    if ax is None:
+        ax = plt.subplot(111)
+
+    # Place nucleotides in a graph with pairings obtained from the structure
+    G = nx.Graph()
+    stack = []
+    for i, (nt, char, color) in enumerate(zip(sequence, structure, colors, strict=True)):
+        G.add_node(i, label=nt, color=color)
+        if char == '(':
+            stack.append(i)
+        elif char == ')':
+            j = stack.pop()
+            G.add_edge(j, i)
+
+        if i > 0:
+            G.add_edge(i - 1, i)
+
+    # This layout seems to work well for gRNAs
+    pos = nx.kamada_kawai_layout(G)
+    # but we need to rotate the structures
+    flipped_pos = {node: (1 - x, y) for node, (x, y) in pos.items()}
+    rotated_pos = {node: (-y, x) for node, (x, y) in flipped_pos.items()}
+    scaled_pos = {node: (x * scale[0], y * scale[1]) for node, (x, y) in rotated_pos.items()}
+    shifted_pos = {node: (x + shift[0], y + shift[1]) for node, (x, y) in scaled_pos.items()}
+
+    _ = nx.draw_networkx(G, shifted_pos, with_labels=False, node_size=node_size,
+                         node_color=[G.nodes[n]['color'] for n in G.nodes],
+                         edge_color='lightgray',
+                         hide_ticks=False,
+                         ax=ax)
+    _ = nx.draw_networkx_labels(G, shifted_pos, labels={n: G.nodes[n]['label'] for n in G.nodes}, font_size=12)
+    ax.set_axis_off()
+
+
+idx = 149
 seq = SeqFeature.Seq(direct_repeat + df.iloc[idx]['spacer']).transcribe()
 structure, mfe = ViennaRNA.fold(str(seq))
-
-G = nx.Graph()
-stack = []
-for i, (nt, char) in enumerate(zip(seq, structure)):
-    color = 'salmon' if i < len(direct_repeat) else 'skyblue'
-    G.add_node(i, label=nt, color=color)
-    if char == '(':
-        stack.append(i)
-    elif char == ')':
-        j = stack.pop()
-        G.add_edge(j, i)
-
-    if i > 0:
-        G.add_edge(i - 1, i)
-
-pos = nx.kamada_kawai_layout(G)
-_ = nx.draw(G, pos, with_labels=False, node_size=100, node_color=[G.nodes[n]['color'] for n in G.nodes])
-_ = nx.draw_networkx_labels(G, pos, labels={n: G.nodes[n]['label'] for n in G.nodes}, font_size=12)
+colors = ['salmon'] * len(direct_repeat) + ['skyblue'] * len(df.iloc[idx]['spacer'])
+draw(structure, sequence=seq, colors=colors, node_size=100)
 plt.title(f'MFE = {mfe:.2f}')
 
 
@@ -167,6 +201,31 @@ df['GC bin'] = df['GC content'].apply(_gc_bin)
 order = ['<40', '40-50', '50-60', '60-70', '70-80', '>80']
 sns.swarmplot(data=df, x='GC bin', y='indel', size=1, order=order)
 sns.pointplot(data=df, x='GC bin', y='indel', linestyles='', order=order)
+
+
+# %% [markdown]
+# Editing efficiency as  a function of number of paired bases
+
+df['structure'] = df['spacer'].apply(lambda x: ViennaRNA.fold(direct_repeat + x)[0])
+ct = df['structure'].apply(lambda x: x[len(direct_repeat):].count('(') + x[len(direct_repeat):].count(')'))
+# Or count pairings in the entire gRNA
+# ct = df['structure'].apply(lambda x: x.count('(') + x.count(')'))
+
+plt.figure(figsize=(12, 6))
+ax = sns.stripplot(data=df, x=ct, y='indel', dodge=True, alpha=.25, zorder=1, color='black')
+ax = sns.pointplot(
+    data=df, x=ct, y='indel', linestyle='none',
+    errorbar=None, markers='d', color='red', estimator='median'
+)
+
+colors = ['salmon'] * len(direct_repeat) + ['skyblue'] * len(df.loc[0, 'spacer'])
+for i, c in enumerate(np.unique(ct)):
+    struct = df.loc[ct == c, 'structure'].iloc[0]
+    draw(struct, node_size=.5, scale=(.5, 20), shift=(i, 100), colors=colors, ax=ax)
+
+plt.xlabel('Number of paired bases in the spacer')
+plt.ylabel('% indels')
+plt.yticks(ticks=[0, 20, 40, 60, 80, 100])
 
 
 # %% [markdown]
