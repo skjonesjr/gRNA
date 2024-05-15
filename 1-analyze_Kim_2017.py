@@ -79,8 +79,10 @@ def draw(
         sequence = [''] * len(structure)
     if colors is None:
         colors = ['skyblue'] * len(structure)
+    hide_axis = False
     if ax is None:
         ax = plt.subplot(111)
+        hide_axis = True
 
     # Place nucleotides in a graph with pairings obtained from the structure
     G = nx.Graph()
@@ -104,13 +106,14 @@ def draw(
     scaled_pos = {node: (x * scale[0], y * scale[1]) for node, (x, y) in rotated_pos.items()}
     shifted_pos = {node: (x + shift[0], y + shift[1]) for node, (x, y) in scaled_pos.items()}
 
-    _ = nx.draw_networkx(G, shifted_pos, with_labels=False, node_size=node_size,
+    nx.draw_networkx(G, shifted_pos, with_labels=False, node_size=node_size,
                          node_color=[G.nodes[n]['color'] for n in G.nodes],
                          edge_color='lightgray',
                          hide_ticks=False,
                          ax=ax)
-    _ = nx.draw_networkx_labels(G, shifted_pos, labels={n: G.nodes[n]['label'] for n in G.nodes}, font_size=12)
-    ax.set_axis_off()
+    nx.draw_networkx_labels(G, shifted_pos, labels={n: G.nodes[n]['label'] for n in G.nodes}, font_size=12, hide_ticks=False, ax=ax)
+    if hide_axis:
+        ax.set_axis_off()
 
 
 idx = 149
@@ -166,7 +169,7 @@ sns.regplot(data=df, x='spacer MFE', y='indel', marker='.', color='black')
 # %% [markdown]
 # Editing efficiency vs MFE of the whole gRNA
 
-df['gRNA MFE'] = df['spacer'].apply(lambda x: ViennaRNA.fold(direct_repeat + x)[1])
+df['gRNA+tail MFE'] = df['spacer'].apply(lambda x: ViennaRNA.fold(direct_repeat + x)[1])
 sns.regplot(data=df, x='gRNA+tail MFE', y='indel', marker='.', color='black')
 
 
@@ -223,9 +226,9 @@ for i, c in enumerate(np.unique(ct)):
     struct = df.loc[ct == c, 'structure'].iloc[0]
     draw(struct, node_size=.5, scale=(.5, 20), shift=(i, 100), colors=colors, ax=ax)
 
-plt.xlabel('Number of paired bases in the spacer')
-plt.ylabel('% indels')
-plt.yticks(ticks=[0, 20, 40, 60, 80, 100])
+ax.set_xlabel('Number of paired bases in the spacer')
+ax.set_ylabel('% indels')
+ax.set_yticks(ticks=[0, 20, 40, 60, 80, 100])
 
 
 # %% [markdown]
@@ -314,7 +317,83 @@ for train, test in tqdm.tqdm(cv.split(X, y)):
     scores.append(score)
 
 
-print(f'Mean score: {np.mean(scores):.2f}')
+print(f'Mean score: {np.mean(scores):.2f}')  # Mean score = .29
+
+plt.scatter(y[test], y_pred)
+plt.xlabel('measured indel')
+plt.ylabel('predicted indel')
+plt.title('Last fold results')
+
+
+# %% [markdown]
+# # Try RiNAlmo
+# ## Get features
+
+# Run on a GPU server and copy the resulting file to your computer:
+# python get_rinalmo_features.py
+
+feats = np.load(ROOT / 'rinalmo-giga-v1_features.npy')
+feats.shape
+
+
+# %% [markdown]
+# ## Dimensionality reduction
+# Check if all dimensions have enough variance
+
+X = feats.mean(axis=1)
+std = X.std(axis=0)
+plt.plot(np.sort(std))  # Yeah, all have some info
+
+
+# %% [markdown]
+# How many dimensions are sufficient?
+
+pca = sklearn.decomposition.PCA()
+pca.fit(X)
+plt.plot(range(1, X.shape[0] + 1), pca.explained_variance_ratio_)
+plt.xlabel('n_components')
+plt.ylabel('explained_variance_ratio')
+plt.xlim([0, 20])  # 20 components is totally enough
+
+
+# %% [markdown]
+# Let's use ElasticNet
+
+cv = sklearn.model_selection.ShuffleSplit(n_splits=10, train_size=.75, random_state=0)
+pipe = sklearn.pipeline.Pipeline([
+    ('scaler', sklearn.preprocessing.StandardScaler()),
+    # ('pca', sklearn.decomposition.PCA(n_components=200)),
+    ('reg', sklearn.linear_model.ElasticNet())
+])
+
+X = feats.mean(axis=1)
+y = df['indel']
+sklearn.model_selection.cross_val_score(pipe, X, y, cv=cv)
+
+
+# %% [markdown]
+# Let's try to predict as in Kim et al.
+
+X = feats.mean(axis=1)
+y = df['indel']
+
+cv = sklearn.model_selection.ShuffleSplit(n_splits=10, train_size=.75, random_state=0)
+pipe = sklearn.pipeline.Pipeline([
+    ('scaler', sklearn.preprocessing.StandardScaler()),
+    ('reg', sklearn.linear_model.ElasticNet())
+])
+
+scores = []
+for train, test in tqdm.tqdm(cv.split(X, y)):
+    pipe.fit(X[train], y[train])
+    sel = [coef != 0 for coef in pipe['reg'].coef_]
+    pipe.fit(X[train][:, sel], y[train])
+    y_pred = pipe.predict(X[test][:, sel])
+    score = pipe.score(X[test][:, sel], y[test])
+    scores.append(score)
+
+
+print(f'Mean score: {np.mean(scores):.2f}')  # Mean score = .19
 
 plt.scatter(y[test], y_pred)
 plt.xlabel('measured indel')
