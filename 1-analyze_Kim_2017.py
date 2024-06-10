@@ -107,10 +107,10 @@ def draw(
     shifted_pos = {node: (x + shift[0], y + shift[1]) for node, (x, y) in scaled_pos.items()}
 
     nx.draw_networkx(G, shifted_pos, with_labels=False, node_size=node_size,
-                         node_color=[G.nodes[n]['color'] for n in G.nodes],
-                         edge_color='lightgray',
-                         hide_ticks=False,
-                         ax=ax)
+                     node_color=[G.nodes[n]['color'] for n in G.nodes],
+                     edge_color='lightgray',
+                     hide_ticks=False,
+                     ax=ax)
     nx.draw_networkx_labels(G, shifted_pos, labels={n: G.nodes[n]['label'] for n in G.nodes}, font_size=12, hide_ticks=False, ax=ax)
     if hide_axis:
         ax.set_axis_off()
@@ -227,6 +227,31 @@ for i, c in enumerate(np.unique(ct)):
     draw(struct, node_size=.5, scale=(.5, 20), shift=(i, 100), colors=colors, ax=ax)
 
 ax.set_xlabel('Number of paired bases in the spacer')
+ax.set_ylabel('% indels')
+ax.set_yticks(ticks=[0, 20, 40, 60, 80, 100])
+
+
+# %% [markdown]
+# Editing efficiency as  a function of number of paired bases
+
+df['structure'] = df['spacer'].apply(lambda x: ViennaRNA.fold(direct_repeat + x)[0])
+ct = df['structure'].apply(lambda x: x[len(direct_repeat):].count('(') + x[len(direct_repeat):].count(')'))
+# Or count pairings in the entire gRNA
+# ct = df['structure'].apply(lambda x: x.count('(') + x.count(')'))
+
+plt.figure(figsize=(8, 6))
+ax = sns.stripplot(data=df, x=ct, y='indel', dodge=True, alpha=.25, zorder=1, color='black')
+ax = sns.pointplot(
+    data=df, x=ct, y='indel', linestyle='none',
+    errorbar=None, markers='d', color='red', estimator='median'
+)
+
+struct = df.loc[ct == 0, 'structure'].iloc[0]
+draw(struct, node_size=3, scale=(3, 20), shift=(-5, 20), colors=colors, ax=ax)
+struct = df.loc[ct == 19, 'structure'].iloc[0]
+draw(struct, node_size=3, scale=(3, 20), shift=(20, 0), colors=colors, ax=ax)
+
+ax.set_xlabel('Predicted paired bases in the spacer')
 ax.set_ylabel('% indels')
 ax.set_yticks(ticks=[0, 20, 40, 60, 80, 100])
 

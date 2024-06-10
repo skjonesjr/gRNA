@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 import pandas
 import mygene
 from Bio import Entrez, SeqIO
-import ViennaRNA
 
 
 with open('.env') as f:
@@ -84,7 +83,7 @@ for gene, name in zip(gene_list, top_n_genes['gene_normalized']):
         raise ValueError(f'Gene {gene_id} has no annotated exons')
 
     # There are many alternative splicings – go over them all
-    for transcript in gene['exons']:
+    for exon_no, transcript in enumerate(gene['exons']):
         chrom = transcript['chr']
         # Find exons that are within CDS (cause not all exons are translated),
         # match PAM, and have the correct length
@@ -109,11 +108,13 @@ for gene, name in zip(gene_list, top_n_genes['gene_normalized']):
                             'gene_id': gene_id,
                             'name': name,
                             'transcript_id': transcript['transcript'],
+                            'exon_no': exon_no,
                             'PAM': pam,
                             'start': start + target_start,
                             'end': start + target_start + target_size,
                             'target': target,
                         })
+                        exon_no += 1
 
 targets = pandas.DataFrame(targets)
 targets.to_csv(ROOT / f'cas12a_targets_in_top{len(top_n_genes)}_oncogenes.csv', index=False)
@@ -129,7 +130,7 @@ target_size = 21
 mg = mygene.MyGeneInfo()
 
 targets = []
-for gene in tqdm.tqdm(gene_list):
+for gene, name in zip(gene_list, top_n_genes['gene_normalized']):
     gene_id = gene['query']
 
     if 'exons' not in gene:
@@ -160,6 +161,7 @@ for gene in tqdm.tqdm(gene_list):
 
         # Find exons that are within CDS (cause not all exons are translated),
         # match PAM, and have the correct length
+        exon_no = 0
         for feat in record.features:
             if feat.type == 'exon' and feat.location.start >= cds_start and feat.location.end <= cds_end:
                 # Get exon's sequence
@@ -174,13 +176,15 @@ for gene in tqdm.tqdm(gene_list):
                             continue
                         targets.append({
                             'gene_id': gene_id,
-                            'name': row['gene_normalized'],
+                            'name': name,
                             'transcript_id': transcript_id,
+                            'exon_no': exon_no,
                             'PAM': pam,
                             'start': start,
                             'end': start + target_size,
                             'spacer': str(spacer),
                         })
+                        exon_no += 1
 
 targets = pandas.DataFrame(targets)
 targets.to_csv(ROOT / f'cas12a_targets_in_top{len(gene_list)}_oncogenes.csv', index=False)

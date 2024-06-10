@@ -20,4 +20,5 @@ tokens = torch.tensor(alphabet.batch_tokenize(grnas.values), dtype=torch.int64, 
 with torch.no_grad(), torch.cuda.amp.autocast():
   outputs = model(tokens)
 
+# Features shape: samples x nucleotides x embedding dimension
 np.save('rinalmo-giga-v1_features.npy', outputs['representation'].cpu().numpy())
