@@ -21,7 +21,8 @@ sklearn.set_config(transform_output='pandas')
 
 with open('.env') as f:
     CONFIG = dict([line.strip().split('=', maxsplit=1) for line in f.readlines()])
-ROOT = Path(CONFIG['ROOT'])
+RAW = Path(CONFIG['RAW'])
+INTERIM = Path(CONFIG['INTERIM'])
 
 
 direct_repeat = 'AACACCGTAATTTCTACTCTTGTAGAT'  # also forward primer binding site
@@ -131,7 +132,7 @@ df['indel'].hist(bins=50, grid=False)
 plt.title('Cas12a gRNA editing efficiency of 1251 targets')
 plt.xlabel('Indel frequency (%)')
 plt.ylabel('Count')
-plt.savefig('kim_2017_efficiency.png', dpi=300)
+plt.savefig(ROOT / 'kim_2017_efficiency.png', dpi=300)
 
 
 # %% [markdown]
@@ -429,14 +430,15 @@ plt.title('Last fold results')
 # %% [markdown]
 # # Find Kim et al. genes in the human genome
 
-genome_path = ROOT / 'human_genome_db/GRCh38_latest_genomic.fna'
+genome_path = 'human_genome_db' / 'GRCh38_latest_genomic.fna'
 
 
 # %% [markdown]
 # Create human genome database (need to run once only)
 
 subprocess.call(['makeblastdb',
-                '-in', genome_path,
+                '-in', RAW / genome_path,
+                 '-out', INTERIM / genome_path
                  '-parse_seqids',
                  '-dbtype', 'nucl',
                  ])
@@ -456,7 +458,7 @@ for target in tqdm.tqdm(df['target'].unique()):
     output_file.close()
 
     cmd = ['blastn',
-           '-db', genome_path,
+           '-db', INTERIM / genome_path,
            '-task', 'blastn-short',
            '-query', target_file.name,
            # '-perc_identity', '100',  # would be nice but doesn't do anything
