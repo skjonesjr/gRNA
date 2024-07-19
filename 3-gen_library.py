@@ -149,22 +149,6 @@ agg
 
 
 # %% [markdown]
-# Golden Gate cloning
-
-def golden_gate(parts: list[str | Seq],
-                restriction_enzyme: str | None
-                ):
-    if restriction_enzyme is not None:
-        if isinstance(restriction_enzyme, str):
-            restriction_enzyme = getattr(Bio.Restriction, restriction_enzyme)
-        digested_parts = []
-        for part in parts:
-            digested_parts += restriction_enzyme.catalyze(Seq(part))
-    else:
-        digested_parts = parts
-
-
-# %% [markdown]
 # # Define construct
 # ## Define parts
 
@@ -380,8 +364,6 @@ onco_targets = (df_onco
                 .apply(lambda x: x.sort_values(by=['mfe', 'delta'], ascending=[True, False])
                        .iloc[0])
                 .loc[:, 'target']
-                # .sample(5, random_state=0)
-                # .tolist()
                 )
 len(onco_targets)
 
@@ -393,7 +375,9 @@ targets_kim_orig = df_kim['spacer']
 kim_truncated = df_kim.copy()
 kim_truncated['spacer'] = kim_truncated['spacer'].apply(lambda x: x[:-2])
 
-targets = kim_truncated['spacer'].tolist() + onco_targets.tolist()
+targets_kim = kim_truncated['spacer'].tolist()
+targets_onco = onco_targets.tolist()
+targets = targets_kim + targets_onco
 
 targets_best20 = kim_truncated.sort_values(by='indel').tail(20)['spacer']
 
@@ -416,6 +400,7 @@ targets_medium10 = (kim_medium
                     .tolist()
                     )
 targets_best20 = targets_best20.tolist()
+targets_best5 = targets_best20[-5:]
 
 targets_mix = targets_best20 + targets_medium10 + targets_worst10 + onco_targets.sample(10, random_state=0).tolist()
 
@@ -470,16 +455,17 @@ grna.draw(node_size=80)
 
 
 # %% [markdown]
-# Generate WT sequences with all targets
+# Generate WT sequences with all targets, including all oncogenes
 
 gen_seqs[1] = []
 for spacer in targets:
     grna = gRNA(spacer=spacer, structure='.(.)..')
+    comment = 'oncogene' if spacer in onco_targets else 'kim'
     gen_seqs[1].append({
         'kind': 'replication',
         'parts': '',
         'comment': 'wild-type_scaffold',
-        'targets': 'all',
+        'targets': 'kim_mix100' if spacer in targets_kim else 'onco',
         'distance': 0,
         'total_stem_structures': 1,
         'n_stem_structures': 1,
@@ -530,7 +516,7 @@ for combo_name, parts, offset in combos:
             'kind': 'disruption',
             'parts': '+'.join(combo_name),
             'comment': '',
-            'targets': 'best',
+            'targets': 'kim_best' if spacer in targets_kim else 'onco5',
             'distance': -1,
             'total_stem_structures': 1,
             'n_stem_structures': 1,
@@ -546,13 +532,13 @@ for combo_name, parts, offset in combos:
 # Add poly-A sequence in the scaffold
 
 gen_seqs[3] = []
-for spacer in targets:
+for spacer in targets_best20:
     grna = gRNA(stem1='AAAAA', loop='AAAA', stem2='UUUUU', spacer=spacer, structure='.(.)...')
     gen_seqs[3].append({
         'kind': 'disruption',
         'parts': 'stem1+loop+stem2',
         'comment': 'poly-A',
-        'targets': 'best5',
+        'targets': 'kim_best5',
         'distance': -1,
         'total_stem_structures': -1,
         'n_stem_structures': -1,
@@ -569,14 +555,14 @@ grna.draw(node_size=80)
 
 poly_u_size = 10
 gen_seqs[4] = []
-for spacer in targets:
+for spacer in targets_best5:
     spacer_with_u = poly_u_size * 'U' + spacer[poly_u_size:]
     grna = gRNA(spacer=spacer_with_u, structure='.(.)...')
     gen_seqs[4].append({
         'kind': 'disruption',
         'parts': 'spacer',
-        'comment': 'terminator',
-        'targets': 'best5',
+        'comment': 'poly-U spacer',
+        'targets': 'best5_custom',
         'distance': -1,
         'total_stem_structures': 1,
         'n_stem_structures': 1,
@@ -594,13 +580,13 @@ grna.draw(node_size=80)
 # when producing the whole construct
 
 gen_seqs[5] = []
-for spacer in targets:
+for spacer in targets_best20:
     grna = gRNA(structure='.(.)...', spacer=spacer)
     gen_seqs[5].append({
         'kind': 'disruption',
         'parts': 'promoter_ext',
         'comment': 'no GG',
-        'targets': 'best5',
+        'targets': 'kim_best5' if spacer in targets_kim else 'onco5',
         'distance': -1,
         'total_stem_structures': 1,
         'n_stem_structures': 1,
@@ -630,7 +616,7 @@ for spacer in targets:
         'kind': 'fix',
         'parts': 'tail5+tail3',
         'comment': 'hairpin',
-        'targets': 'worst',
+        'targets': 'kim_worst' if spacer in targets_kim else 'onco5',
         'distance': -1,
         'total_stem_structures': 1,
         'n_stem_structures': 1,
@@ -696,7 +682,7 @@ for struct1, struct2 in tqdm.tqdm(structures):
                 'kind': 'fix',
                 'parts': 'stem',
                 'comment': 'structure',
-                'targets': 'best3',
+                'targets': 'kim_best3',
                 'distance': -1,
                 'total_stem_structures': len(stem_structures),
                 'n_stem_structures': len(structures),
@@ -785,8 +771,7 @@ for spacer in tqdm.tqdm(targets):
         'kind': 'fix',
         'parts': 'tail5+stem1+loop+stem2+linker',
         'comment': '',
-        'targets': 'custom',
-        # 'n_targets': -1,
+        'targets': 'kim_mix100_sel' if spacer in targets_kim else 'onco5',
         'distance': -1,
         'total_stem_structures': -1,
         'n_stem_structures': 1,
@@ -871,7 +856,7 @@ for idx in inds:
                     'kind': 'substitution',
                     'parts': 'stem',
                     'comment': f'{suffix} dist={dist1}+{dist2}',
-                    'targets': 'mix',
+                    'targets': 'kim_mix23' if spacer in targets_kim else 'onco5',
                     'distance': dist1 + dist2,
                     'total_stem_structures': len(inds),
                     'n_stem_structures': len(inds),
@@ -912,7 +897,7 @@ for part_name, wt_part in parts:
                     'kind': 'substitution',
                     'parts': part_name,
                     'comment': '',
-                    'targets': 'mix',
+                    'targets': 'kim_mix23' if spacer in targets_kim else 'onco5',
                     'distance': dist,
                     'total_stem_structures': 1,
                     'n_stem_structures': 1,
@@ -956,7 +941,7 @@ for part_name, wt_part in parts:
                 'kind': 'deletion',
                 'parts': part_name,
                 'comment': '',
-                'targets': 'best',
+                'targets': 'kim_best' if spacer in targets_kim else 'onco5',
                 'distance': -1,
                 'total_stem_structures': 1,
                 'n_stem_structures': 1,
@@ -986,7 +971,7 @@ for _, (stem1, stem2, struct1, struct2) in tqdm.tqdm(dels_df.iterrows()):
             'kind': 'deletion',
             'parts': 'stem',
             'comment': 'paired',
-            'targets': 'best',
+            'targets': 'kim_best' if spacer in targets_kim else 'onco5',
             'distance': -1,
             'total_stem_structures': len(counts),
             'n_stem_structures': len(counts),
@@ -1029,7 +1014,7 @@ for part_name, wt_part in tqdm.tqdm(parts):
                     'kind': 'insertion',
                     'parts': part_name,
                     'comment': '',
-                    'targets': 'mix',
+                    'targets': 'kim_mix23' if spacer in targets_kim else 'onco5',
                     'distance': dist,
                     'total_stem_structures': 1,
                     'n_stem_structures': 1,
@@ -1060,7 +1045,7 @@ df_stem_insertions
 # Add a selection to the final set
 
 structures = df_stem_insertions.apply(lambda x: f'{x["structure1"]}{x["structure2"]}', axis=1)
-n_samples = 3
+n_samples = 2
 gen_seqs[14] = []
 for dist in tqdm.tqdm(df_stem_insertions['distance'].unique()):
     dist_sel = df_stem_insertions[df_stem_insertions['distance'] == dist]
@@ -1078,8 +1063,7 @@ for dist in tqdm.tqdm(df_stem_insertions['distance'].unique()):
                     'kind': 'insertion',
                     'parts': 'stem1+stem2',
                     'comment': '',
-                    'targets': 'mix',
-                    # 'n_targets': len(targets[targets_name]),
+                    'targets': 'kim_mix23' if spacer in targets_kim else 'onco5',
                     'distance': dist,
                     'total_stem_structures': len(uq_structures),
                     'n_stem_structures': len(uq_structures),
@@ -1160,12 +1144,15 @@ kim_sel_trunc = kim_selection.copy()
 kim_sel_trunc['spacer'] = kim_sel_trunc['spacer'].apply(lambda x: x[:-2])
 targets_final = {
     'kim_orig': kim_selection['spacer'].tolist(),
-    'worst': kim_sel_trunc.loc['worst', 'spacer'].tolist() + onco_sel,
-    'best': kim_sel_trunc.loc['best', 'spacer'].tolist() + onco_sel,
-    'best5': kim_sel_trunc.loc['best', 'spacer'].tolist()[-5:],  # the very best
-    'best3': kim_sel_trunc.loc['best', 'spacer'].tolist()[-3:],  # the very best
-    'mix': kim_sel_trunc.loc['best', 'spacer'].tolist() + kim_sel_trunc.loc['medium', 'spacer'].tolist()[:1] + kim_sel_trunc.loc['worst', 'spacer'].tolist()[:2] + onco_sel,
-    'all': kim_sel_trunc['spacer'].tolist() + onco_sel
+    'kim_worst': kim_sel_trunc.loc['worst', 'spacer'].tolist() + onco_sel,
+    'kim_best': kim_sel_trunc.loc['best', 'spacer'].tolist() + onco_sel,
+    'kim_best5': kim_sel_trunc.loc['best', 'spacer'].tolist()[-5:],  # the very best
+    'kim_best3': kim_sel_trunc.loc['best', 'spacer'].tolist()[-3:],  # the very best
+    'kim_mix23': kim_sel_trunc.loc['best', 'spacer'].tolist() + kim_sel_trunc.loc['medium', 'spacer'].tolist()[:1] + kim_sel_trunc.loc['worst', 'spacer'].tolist()[:2] + onco_sel,
+    'kim_mix100': kim_sel_trunc['spacer'].tolist(),
+    # 'kim_mix100_sel': kim_sel_trunc['spacer'].tolist(),
+    'onco5': onco_sel,
+    'onco': onco_targets.tolist()
 }
 for key, values in targets_final.items():
     print(key, len(values))
@@ -1177,47 +1164,71 @@ for key, values in targets_final.items():
 available_barcodes = list(barcodes)  # copy
 constructs_list = []
 bad_targets = set()
-for entries in tqdm.tqdm(list(gen_seqs.values())):
+for entries in tqdm.tqdm(gen_seqs.values()):
     for entry in tqdm.tqdm(entries, leave=False):
+        if entry['kind'] == 'replication' and entry['comment'] == 'wild-type_scaffold' and entry['targets'] == 'kim_mix100':
+            repeats = 2  # two repeats in case one barcode fails
+        else:
+            repeats = 1
+
+        grna = entry['grna']
         if entry['targets'] in targets_final:
             targets_sel = targets_final[entry['targets']]
+            if grna.spacer not in targets_sel:
+                continue
+        elif entry['targets'] == 'best5_custom':
+            targets_sel = targets_final['kim_best5']
+            if grna.spacer in bad_targets:
+                continue
+        elif entry['targets'] == 'kim_mix100_sel':
+            targets_sel = targets_final['kim_mix100']
+            if grna.spacer not in targets_sel:
+                continue
         else:
-            targets_sel = targets_final['all']
-        grna = entry['grna']
-        if grna.spacer not in targets_sel:
-            continue
+            raise ValueError('No such target:', entry['targets'])
+
+        if entry['targets'].startswith('kim'):
+            spacer = grna.spacer[:len(targets[0])]
+            indel = kim_sel_trunc.loc[kim_sel_trunc['spacer'] == spacer, 'indel']
+            assert len(indel) == 1
+            indel = indel.iloc[0]
+        else:
+            indel = ''
 
         # Search for a barcode that keeps construct valid
-        for i in range(100):
-            construct = construct_factory(
-                grna,
-                barcode=available_barcodes[i],
-                skip_ext=entry['comment'] == 'no GG',
-                constant_buffer=''.join(rng.choices('ATCG', k=max_grna_size - len(grna.sequence)))
-            )
-            if construct.is_valid:
-                available_barcodes.pop(i)
-                break
-        else:
-            raise ValueError
+        for _ in range(repeats):
+            for i, barcode in enumerate(available_barcodes):
+                construct = construct_factory(
+                    grna,
+                    barcode=barcode,
+                    skip_ext=entry['comment'] == 'no GG',
+                    constant_buffer=''.join(rng.choices('ATCG', k=max_grna_size - len(grna.sequence)))
+                )
+                if construct.is_valid:
+                    available_barcodes.pop(i)
+                    break
+            else:
+                raise ValueError
 
-        targets_prefix = '+onco5' if entry['targets'] not in ['kim_orig', 'best5'] else ''
-        construct_dict = {
-            'kind': entry['kind'],
-            'parts': entry['parts'],
-            'comment': entry['comment'],
-            'targets': entry['targets'] + targets_prefix,
-            'n_targets': len(targets_sel),
-            'total_stem_structures': entry['total_stem_structures'],
-            'n_stem_structures': entry['n_stem_structures'],
-            'stem_structure': grna.get_part_structure('stem1') + grna.get_part_structure('stem2'),
-            'total_sequences': entry['total_sequences'],
-            'n_sequences': entry['n_sequences'],
-            'distance': entry['distance'],
-            'structure': grna.structure
-        }
-        construct_dict.update(construct.to_dict())
-        constructs_list.append(construct_dict)
+            # targets_prefix = '+onco5' if entry['targets'] not in ['kim_orig', 'best5', 'best3', 'all+oncogenes'] else ''
+
+            construct_dict = {
+                'kind': entry['kind'],
+                'parts': entry['parts'],
+                'comment': entry['comment'],
+                'targets': entry['targets'],
+                'n_targets': len(targets_sel),
+                'kim_indel': indel,
+                'total_stem_structures': entry['total_stem_structures'],
+                'n_stem_structures': entry['n_stem_structures'],
+                'stem_structure': grna.get_part_structure('stem1') + grna.get_part_structure('stem2'),
+                'total_sequences': entry['total_sequences'],
+                'n_sequences': entry['n_sequences'],
+                'distance': entry['distance'],
+                'structure': grna.structure,
+            }
+            construct_dict.update(construct.to_dict())
+            constructs_list.append(construct_dict)
 
 constructs = pandas.DataFrame(constructs_list)
 constructs.to_csv(FINAL / f"grnas_{datetime.now().strftime('%Y%m%d')}.csv", index=False)
