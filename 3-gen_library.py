@@ -197,6 +197,15 @@ class Construct:
         return ''.join(self.parts)
 
     @property
+    def insert_size(self):
+        size = 0
+        for part_name, part in zip(self.part_names, self.parts):
+            if part_name.startswith('backbone'):
+                continue
+            size += len(part)
+        return size
+
+    @property
     def is_valid(self):
         return not self.has_re_sites and not self.has_off_targets and not self.has_off_primers
 
@@ -616,7 +625,7 @@ for spacer in targets:
         'kind': 'fix',
         'parts': 'tail5+tail3',
         'comment': 'hairpin',
-        'targets': 'kim_worst' if spacer in targets_kim else 'onco5',
+        'targets': 'kim_worst_and_medium' if spacer in targets_kim else 'onco5',
         'distance': -1,
         'total_stem_structures': 1,
         'n_stem_structures': 1,
@@ -1086,7 +1095,6 @@ bad_constructs = []
 for entries in tqdm.tqdm(list(gen_seqs.values())):
     for entry in entries:
         grna = entry['grna']
-        max_grna_size = max(max_grna_size, len(grna.sequence))
         construct = construct_factory(
             grna,
             barcode='N' * 20,
@@ -1095,6 +1103,8 @@ for entries in tqdm.tqdm(list(gen_seqs.values())):
         if not construct.is_valid:
             bad_targets.add(grna.spacer)
             bad_constructs.append(construct)
+        else:
+            max_grna_size = max(max_grna_size, len(grna.sequence))
 
 print('Number of bad targets:', len(bad_targets))
 
@@ -1145,12 +1155,12 @@ kim_sel_trunc['spacer'] = kim_sel_trunc['spacer'].apply(lambda x: x[:-2])
 targets_final = {
     'kim_orig': kim_selection['spacer'].tolist(),
     'kim_worst': kim_sel_trunc.loc['worst', 'spacer'].tolist() + onco_sel,
+    'kim_worst_and_medium': kim_sel_trunc.loc['worst', 'spacer'].tolist() + kim_sel_trunc.loc['medium', 'spacer'].tolist() + onco_sel,
     'kim_best': kim_sel_trunc.loc['best', 'spacer'].tolist() + onco_sel,
     'kim_best5': kim_sel_trunc.loc['best', 'spacer'].tolist()[-5:],  # the very best
     'kim_best3': kim_sel_trunc.loc['best', 'spacer'].tolist()[-3:],  # the very best
     'kim_mix23': kim_sel_trunc.loc['best', 'spacer'].tolist() + kim_sel_trunc.loc['medium', 'spacer'].tolist()[:1] + kim_sel_trunc.loc['worst', 'spacer'].tolist()[:2] + onco_sel,
     'kim_mix100': kim_sel_trunc['spacer'].tolist(),
-    # 'kim_mix100_sel': kim_sel_trunc['spacer'].tolist(),
     'onco5': onco_sel,
     'onco': onco_targets.tolist()
 }
@@ -1163,7 +1173,7 @@ for key, values in targets_final.items():
 
 available_barcodes = list(barcodes)  # copy
 constructs_list = []
-bad_targets = set()
+first_construct = True
 for entries in tqdm.tqdm(gen_seqs.values()):
     for entry in tqdm.tqdm(entries, leave=False):
         if entry['kind'] == 'replication' and entry['comment'] == 'wild-type_scaffold' and entry['targets'] == 'kim_mix100':
@@ -1195,22 +1205,27 @@ for entries in tqdm.tqdm(gen_seqs.values()):
         else:
             indel = ''
 
+        skip_ext = entry['comment'] == 'no GG'
+        buffer_add = 2 if skip_ext else 0
+        if entry['targets'] != 'kim_orig':
+            buffer_add += 2
         # Search for a barcode that keeps construct valid
         for _ in range(repeats):
             for i, barcode in enumerate(available_barcodes):
                 construct = construct_factory(
                     grna,
                     barcode=barcode,
-                    skip_ext=entry['comment'] == 'no GG',
-                    constant_buffer=''.join(rng.choices('ATCG', k=max_grna_size - len(grna.sequence)))
+                    skip_ext=skip_ext,
+                    constant_buffer=''.join(rng.choices('ATCG', k=max_grna_size - len(grna.sequence) + buffer_add))
                 )
-                if construct.is_valid:
+                if first_construct:
+                    construct_size = construct.insert_size
+                    first_construct = False
+                if construct.is_valid and construct.insert_size == construct_size:
                     available_barcodes.pop(i)
                     break
             else:
                 raise ValueError
-
-            # targets_prefix = '+onco5' if entry['targets'] not in ['kim_orig', 'best5', 'best3', 'all+oncogenes'] else ''
 
             construct_dict = {
                 'kind': entry['kind'],
@@ -1231,8 +1246,15 @@ for entries in tqdm.tqdm(gen_seqs.values()):
             constructs_list.append(construct_dict)
 
 constructs = pandas.DataFrame(constructs_list)
+constructs.loc[constructs['targets'] == 'kim_mix100_sel', 'n_targets'] = (constructs['targets'] == 'kim_mix100_sel').sum()
 constructs.to_csv(FINAL / f"grnas_{datetime.now().strftime('%Y%m%d')}.csv", index=False)
 constructs
+
+
+# %% [markdown]
+# Check sequence counts
+
+constructs.groupby(['kind', 'parts', 'comment', 'targets']).size()
 
 
 # %% [markdown]
@@ -1362,6 +1384,9 @@ for name, part in construct.loc['primer5':'primer3_rev_compl'].items():
 pdf.ln(h=10)
 
 pdf.set_font('helvetica', size=20)
+insert_size = len(''.join(construct.loc['primer5': 'primer3_rev_compl']))
+pdf.cell(text=f"Sequence length: {insert_size}")
+pdf.ln()
 pdf.cell(text=f"{RESTRICTION_ENZYME.__name__} recognition site highlighted")
 
 pdf.output(FINAL / f"overview_{datetime.now().strftime('%Y%m%d')}.pdf")
